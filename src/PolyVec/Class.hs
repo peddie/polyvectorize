@@ -1,145 +1,249 @@
 {-# OPTIONS_GHC -Wall #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 
+-- | First pass at a polyvectorize idea.
+-- This is a proof of concept implementation to think about a final design.
+-- Not yet addressed:
+--   PolyVec1 for kind * -> * data
+--   Make it polymorphism over symbolic types.
 module PolyVec.Class
-       ( Vectorize(..)
-       , GVectorize(..)
+       ( PolyVec(..), devectorize
+       , Arrays(..), ArrayLengths(..)
+       , GPolyVec(..)
        ) where
 
 import GHC.Generics
 
-import Data.Either ( partitionEithers )
-import qualified Data.Vector as V
+import Data.Monoid
+import Data.Int ( Int8, Int16, Int32, Int64 )
 import Data.Proxy ( Proxy(..) )
-import Text.Printf ( printf )
+import Data.Word ( Word8, Word16, Word32, Word64 )
 
--- | fmap f == devectorize . (V.map f) . vectorize
-class Applicative f => Vectorize (f :: * -> *) where
-  vectorize :: f a -> V.Vector a
-  devectorize' :: V.Vector a -> Either String (f a)
-  vlength :: Proxy f -> Int
+data Arrays
+  = Arrays
+    { arrayInt8   :: [Int8]
+    , arrayInt16  :: [Int16]
+    , arrayInt32  :: [Int32]
+    , arrayInt64  :: [Int64]
+    , arrayWord8  :: [Word8]
+    , arrayWord16 :: [Word16]
+    , arrayWord32 :: [Word32]
+    , arrayWord64 :: [Word64]
+    , arrayFloat  :: [Float]
+    , arrayDouble :: [Double]
+    } deriving (Eq, Show)
 
-  default vectorize :: (Generic1 f, GVectorize (Rep1 f)) => f a -> V.Vector a
-  vectorize f = gvectorize (from1 f)
+instance Monoid Arrays where
+  mempty =
+    Arrays
+    { arrayInt8   = []
+    , arrayInt16  = []
+    , arrayInt32  = []
+    , arrayInt64  = []
+    , arrayWord8  = []
+    , arrayWord16 = []
+    , arrayWord32 = []
+    , arrayWord64 = []
+    , arrayFloat  = []
+    , arrayDouble = []
+    }
+  mappend x y =
+    Arrays
+    { arrayInt8   = mappend (arrayInt8   x) (arrayInt8   y)
+    , arrayInt16  = mappend (arrayInt16  x) (arrayInt16  y)
+    , arrayInt32  = mappend (arrayInt32  x) (arrayInt32  y)
+    , arrayInt64  = mappend (arrayInt64  x) (arrayInt64  y)
+    , arrayWord8  = mappend (arrayWord8  x) (arrayWord8  y)
+    , arrayWord16 = mappend (arrayWord16 x) (arrayWord16 y)
+    , arrayWord32 = mappend (arrayWord32 x) (arrayWord32 y)
+    , arrayWord64 = mappend (arrayWord64 x) (arrayWord64 y)
+    , arrayFloat  = mappend (arrayFloat  x) (arrayFloat  y)
+    , arrayDouble = mappend (arrayDouble x) (arrayDouble y)
+    }
 
-  default devectorize' :: (Generic1 f, GVectorize (Rep1 f)) => V.Vector a -> Either String (f a)
-  devectorize' f = fmap to1 (gdevectorize f)
 
-  default vlength :: GVectorize (Rep1 f) => Proxy f -> Int
-  vlength = const $ gvlength (Proxy :: Proxy (Rep1 f))
+data ArrayLengths
+  = ArrayLengths
+    { nInt8   :: Int
+    , nInt16  :: Int
+    , nInt32  :: Int
+    , nInt64  :: Int
+    , nWord8  :: Int
+    , nWord16 :: Int
+    , nWord32 :: Int
+    , nWord64 :: Int
+    , nFloat  :: Int
+    , nDouble :: Int
+    } deriving Show
+
+instance Monoid ArrayLengths where
+  mempty =
+    ArrayLengths
+    { nInt8   = 0
+    , nInt16  = 0
+    , nInt32  = 0
+    , nInt64  = 0
+    , nWord8  = 0
+    , nWord16 = 0
+    , nWord32 = 0
+    , nWord64 = 0
+    , nFloat  = 0
+    , nDouble = 0
+    }
+  mappend x y =
+    ArrayLengths
+    { nInt8   = nInt8   x + nInt8   y
+    , nInt16  = nInt16  x + nInt16  y
+    , nInt32  = nInt32  x + nInt32  y
+    , nInt64  = nInt64  x + nInt64  y
+    , nWord8  = nWord8  x + nWord8  y
+    , nWord16 = nWord16 x + nWord16 y
+    , nWord32 = nWord32 x + nWord32 y
+    , nWord64 = nWord64 x + nWord64 y
+    , nFloat  = nFloat  x + nFloat  y
+    , nDouble = nDouble x + nDouble y
+    }
+
+-- | calls devectorizeIncremental, makes sure there are no leftovers, and turns 'Left' into 'error'
+devectorize :: PolyVec a => Arrays -> a
+devectorize x = case devectorizeIncremental x of
+  Left err -> error err
+  Right (r, leftovers)
+    | leftovers == mempty -> r
+    | otherwise -> error $ "devectorize got leftover values: " ++ show leftovers
+
+class PolyVec a where
+  vectorize :: a -> Arrays
+  devectorizeIncremental :: Arrays -> Either String (a, Arrays)
+  vlengths :: Proxy a -> ArrayLengths
+
+  default vectorize :: (Generic a, GPolyVec (Rep a)) => a -> Arrays
+  vectorize x = gvectorize (from x)
+
+  default devectorizeIncremental :: (Generic a, GPolyVec (Rep a)) => Arrays -> Either String (a, Arrays)
+  devectorizeIncremental x = overFst to <$> gdevectorizeIncremental x
+
+  default vlengths :: GPolyVec (Rep a) => Proxy a -> ArrayLengths
+  vlengths = const $ gvlengths (Proxy :: Proxy (Rep a))
 
 
-class GVectorize (f :: * -> *) where
-  gvectorize :: f a -> V.Vector a
-  gdevectorize :: V.Vector a -> Either String (f a)
-  gvlength :: Proxy f -> Int
+class GPolyVec a where
+  gvectorize :: a p -> Arrays
+  gdevectorizeIncremental :: Arrays -> Either String (a p, Arrays)
+  gvlengths :: Proxy a -> ArrayLengths
 
--- product type (concatination)
-instance (GVectorize f, GVectorize g) => GVectorize (f :*: g) where
-  gvectorize (f :*: g) = gvectorize f V.++ gvectorize g
-  gdevectorize v0s
-    | V.length v0s < n0 =
-      Left $ "gdevectorize (f :*: g): V.length v0s < vlength f0  (" ++
-             show (V.length v0s) ++ " < " ++ show n0 ++ ")"
-    | V.length v1 /= n1 =
-      Left $ "gdevectorize (f :*: g): V.length v1 /= vlength f1  (" ++
-             show (V.length v1) ++ " /= " ++ show n1 ++ ")"
-    | otherwise = case (ef0, ef1) of
-      (Left msg0, Left msg1) ->
-        Left $ "gdevectorize (f :*: g): errored on both sides: {" ++ msg0 ++ ", " ++ msg1 ++ "}"
-      (Left msg0, Right   _) ->
-        Left $ "gdevectorize (f :*: g): errored on left side: " ++ msg0
-      (Right   _, Left msg1) ->
-        Left $ "gdevectorize (f :*: g): errored on right side: " ++ msg1
-      (Right f0, Right f1) -> Right (f0 :*: f1)
+
+-- product types
+instance (GPolyVec f, GPolyVec g) => GPolyVec (f :*: g) where
+  gvectorize (f :*: g) = gvectorize f <> gvectorize g
+  gdevectorizeIncremental v0 = case gdevectorizeIncremental v0 of
+    Left err -> Left $ "gdevectorizeIncremental (f :*: g) errored on f: " ++ err
+    Right (f, v1) -> case gdevectorizeIncremental v1 of
+      Left err -> Left $ "gdevectorizeIncremental (f :*: g) errored on g: " ++ err
+      Right (g, v2) -> Right (f :*: g, v2)
+  gvlengths = const (nf <> ng)
     where
-      ef0 = gdevectorize v0
-      ef1 = gdevectorize v1
+      nf = gvlengths (Proxy :: Proxy f)
+      ng = gvlengths (Proxy :: Proxy g)
 
-      n0 = gvlength (Proxy :: Proxy f)
-      n1 = gvlength (Proxy :: Proxy g)
-
-      (v0,v1) = V.splitAt n0 v0s
-
-  gvlength = const (nf + ng)
-    where
-      nf = gvlength (Proxy :: Proxy f)
-      ng = gvlength (Proxy :: Proxy g)
+overFst :: (a -> b) -> (a, c) -> (b, c)
+overFst f (x, y) = (f x, y)
 
 -- Metadata (constructor name, etc)
-instance GVectorize f => GVectorize (M1 i c f) where
+instance GPolyVec a => GPolyVec (M1 i c a) where
   gvectorize = gvectorize . unM1
-  gdevectorize = fmap M1 . gdevectorize
-  gvlength = gvlength . proxy
+  gdevectorizeIncremental = fmap (overFst M1) . gdevectorizeIncremental
+  gvlengths = gvlengths . proxy
     where
-      proxy :: Proxy (M1 i c f) -> Proxy f
+      proxy :: Proxy (M1 i c a) -> Proxy a
       proxy = const Proxy
-
--- singleton
-instance GVectorize Par1 where
-  gvectorize = V.singleton . unPar1
-  gdevectorize v = case V.toList v of
-    [] -> Left "gdevectorize Par1: got empty list"
-    [x] -> Right (Par1 x)
-    xs -> Left $ "gdevectorize Par1: got non-1 length: " ++ show (length xs)
-  gvlength = const 1
 
 -- data with no fields
-instance GVectorize U1 where
-  gvectorize = const V.empty
-  gdevectorize v
-    | V.null v = Right U1
-    | otherwise = Left $ "gdevectorize U1: got non-null vector, length: " ++ show (V.length v)
-  gvlength = const 0
+instance GPolyVec U1 where
+  gvectorize = const mempty
+  gdevectorizeIncremental v = Right (U1, v)
+  gvlengths = const mempty
 
--- Constants, additional parameters, and rank-1 recursion
-instance Vectorize f => GVectorize (Rec1 f) where
-  gvectorize = vectorize . unRec1
-  gdevectorize = fmap Rec1 . devectorize'
-  gvlength = vlength . proxy
+-- recursion
+instance PolyVec a => GPolyVec (Rec0 a) where
+  gvectorize = vectorize . unK1
+  gdevectorizeIncremental = fmap (overFst K1) . devectorizeIncremental
+  gvlengths = vlengths . proxy
     where
-      proxy :: Proxy (Rec1 f) -> Proxy f
+      proxy :: Proxy (Rec0 a) -> Proxy a
       proxy = const Proxy
 
--- composition
-instance (Vectorize f, GVectorize g) => GVectorize (f :.: g) where
-  gvectorize = V.concatMap gvectorize . vectorize . unComp1
-  gdevectorize v = case partitionEithers (V.toList evs) of
-    ([], vs) -> fmap Comp1 (devectorize' (V.fromList vs))
-    (bad, good) -> Left $ printf "gdevectorize (f :.: g): got %d failures and %d successes"
-                          (length bad) (length good)
-    where
-      kf = vlength (Proxy :: Proxy f)
-      kg = gvlength (Proxy :: Proxy g)
+-- the rest of this is the actual values
+instance PolyVec Int8 where
+  vectorize x = mempty {arrayInt8 = [x]}
+  devectorizeIncremental v = case arrayInt8 v of
+    [] -> Left "ran out of int8s"
+    x0:xs -> Right (x0, v {arrayInt8 = xs})
+  vlengths = const (mempty {nInt8 = 1})
 
-      --evs :: V.Vector (Either String (g a))
-      evs = fmap gdevectorize (splitsAt kg kf v {-:: Vec nf (Vec ng a)-} )
+instance PolyVec Int16 where
+  vectorize x = mempty {arrayInt16 = [x]}
+  devectorizeIncremental v = case arrayInt16 v of
+    [] -> Left "ran out of int16s"
+    x0:xs -> Right (x0, v {arrayInt16 = xs})
+  vlengths = const (mempty {nInt16 = 1})
 
-  gvlength = const (nf * ng)
-    where
-      nf = vlength (Proxy :: Proxy f)
-      ng = gvlength (Proxy :: Proxy g)
+instance PolyVec Int32 where
+  vectorize x = mempty {arrayInt32 = [x]}
+  devectorizeIncremental v = case arrayInt32 v of
+    [] -> Left "ran out of int32s"
+    x0:xs -> Right (x0, v {arrayInt32 = xs})
+  vlengths = const (mempty {nInt32 = 1})
 
--- break a vector jOuter vectors, each of length kInner
-splitsAt' :: Int -> Int -> V.Vector a -> [V.Vector a]
-splitsAt' 0 jOuter v
-  | V.null v = replicate jOuter V.empty
-  | otherwise = error $ "splitsAt 0 " ++ show jOuter ++ ": got non-zero vector"
-splitsAt' kInner 0 v
-  | V.null v = []
-  | otherwise = error $ "splitsAt " ++ show kInner ++ " 0: leftover vector of length: " ++ show (V.length v)
-splitsAt' kInner jOuter v
-  | kv0 < kInner =
-    error $ "splitsAt " ++ show kInner ++ " " ++ show jOuter ++ ": " ++ "ran out of vector input"
-  | otherwise = v0 : splitsAt' kInner (jOuter - 1) v1
-  where
-    kv0 = V.length v0
-    (v0,v1) = V.splitAt kInner v
+instance PolyVec Int64 where
+  vectorize x = mempty {arrayInt64 = [x]}
+  devectorizeIncremental v = case arrayInt64 v of
+    [] -> Left "ran out of int64s"
+    x0:xs -> Right (x0, v {arrayInt64 = xs})
+  vlengths = const (mempty {nInt64 = 1})
 
--- break a vector jOuter vectors, each of length kInner
-splitsAt :: Int -> Int -> V.Vector a -> V.Vector (V.Vector a)
-splitsAt k j = V.fromList . splitsAt' k j
+instance PolyVec Word8 where
+  vectorize x = mempty {arrayWord8 = [x]}
+  devectorizeIncremental v = case arrayWord8 v of
+    [] -> Left "ran out of word8s"
+    x0:xs -> Right (x0, v {arrayWord8 = xs})
+  vlengths = const (mempty {nWord8 = 1})
+
+instance PolyVec Word16 where
+  vectorize x = mempty {arrayWord16 = [x]}
+  devectorizeIncremental v = case arrayWord16 v of
+    [] -> Left "ran out of word16s"
+    x0:xs -> Right (x0, v {arrayWord16 = xs})
+  vlengths = const (mempty {nWord16 = 1})
+
+instance PolyVec Word32 where
+  vectorize x = mempty {arrayWord32 = [x]}
+  devectorizeIncremental v = case arrayWord32 v of
+    [] -> Left "ran out of word32s"
+    x0:xs -> Right (x0, v {arrayWord32 = xs})
+  vlengths = const (mempty {nWord32 = 1})
+
+instance PolyVec Word64 where
+  vectorize x = mempty {arrayWord64 = [x]}
+  devectorizeIncremental v = case arrayWord64 v of
+    [] -> Left "ran out of word64s"
+    x0:xs -> Right (x0, v {arrayWord64 = xs})
+  vlengths = const (mempty {nWord64 = 1})
+
+instance PolyVec Float where
+  vectorize x = mempty {arrayFloat = [x]}
+  devectorizeIncremental v = case arrayFloat v of
+    [] -> Left "ran out of floats"
+    x0:xs -> Right (x0, v {arrayFloat = xs})
+  vlengths = const (mempty {nFloat = 1})
+
+instance PolyVec Double where
+  vectorize x = mempty {arrayDouble = [x]}
+  devectorizeIncremental v = case arrayDouble v of
+    [] -> Left "ran out of doubles"
+    x0:xs -> Right (x0, v {arrayDouble = xs})
+  vlengths = const (mempty {nDouble = 1})

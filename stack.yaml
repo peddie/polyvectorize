@@ -1,10 +1,10 @@
 resolver: lts-9.0
+#resolver: nightly-2017-08-15
 
 packages:
 - .
 
-extra-deps: [ generic-accessors-0.6.0.1
-            , spatial-math-0.4.0.0
+extra-deps: [ spatial-math-0.4.0.0
             ]
 
 # Override default flag values for local packages and extra-deps
