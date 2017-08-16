@@ -14,7 +14,9 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     PolyVec
+  exposed-modules:     PolyVec.Class
+                       PolyVec.Orphans
+                       PolyVec.Stuff
   build-depends:       base >= 4.7 && < 5,
                        aeson,
                        binary,
