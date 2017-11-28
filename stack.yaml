@@ -5,6 +5,9 @@ packages:
 - .
 
 extra-deps: [ spatial-math-0.4.0.0
+            , sbv-7.4
+            , crackNum-1.9
+            , FloatingHex-0.4
             ]
 
 # Override default flag values for local packages and extra-deps
