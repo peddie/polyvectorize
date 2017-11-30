@@ -16,9 +16,10 @@ library
   hs-source-dirs:      src
   exposed-modules:     PolyVec.Class
                        PolyVec.Orphans
---                       PolyVec.PartialDesign
+                       PolyVec.Writeup
                        PolyVec.Stuff
   build-depends:       base >= 4.7 && < 5,
+                       generics-sop,
                        linear,
                        sbv,
                        spatial-math,
