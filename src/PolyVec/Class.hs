@@ -13,16 +13,20 @@ module PolyVec.Class
        ( Arrays(..), ArrayLengths(..)
        , PolyVec(..)
        , devectorize, devectorize'
+
+         -- * Vectorize-friendly versions
+       , vectorizeV, devectorizeIncrementalV, vlengthsV
        ) where
 
-import Generics.SOP
-
+import Control.Monad.Trans.State
+import Control.Monad.Trans.Except
 import Data.Vector ( Vector )
 import qualified Data.Vector as V
 import Data.Monoid ( Monoid(..) )
 import Data.Int ( Int8, Int16, Int32, Int64 )
 import Data.Proxy ( Proxy(..) )
 import Data.Word ( Word8, Word16, Word32, Word64 )
+import Generics.SOP
 
 data Arrays f
   = Arrays
@@ -69,21 +73,21 @@ instance Monoid (Arrays f) where
     }
 
 -- | useful container for counting lengths of Arrays
-data ArrayLengths
+data ArrayLengths a
   = ArrayLengths
-    { nBool   :: !Word64
-    , nInt8   :: !Word64
-    , nInt16  :: !Word64
-    , nInt32  :: !Word64
-    , nInt64  :: !Word64
-    , nWord8  :: !Word64
-    , nWord16 :: !Word64
-    , nWord32 :: !Word64
-    , nWord64 :: !Word64
-    , nFloat  :: !Word64
-    , nDouble :: !Word64
+    { nBool   :: !a
+    , nInt8   :: !a
+    , nInt16  :: !a
+    , nInt32  :: !a
+    , nInt64  :: !a
+    , nWord8  :: !a
+    , nWord16 :: !a
+    , nWord32 :: !a
+    , nWord64 :: !a
+    , nFloat  :: !a
+    , nDouble :: !a
     } deriving Show
-instance Monoid ArrayLengths where
+instance Num a => Monoid (ArrayLengths a) where
   mempty =
     ArrayLengths
     { nBool   = 0
@@ -113,10 +117,11 @@ instance Monoid ArrayLengths where
     , nDouble = nDouble x + nDouble y
     }
 
+--class PolyVec (f :: * -> *) (a :: *) where
 class PolyVec f a where
   vectorize :: a -> Arrays f
   devectorizeIncremental :: Arrays f -> Either String (a, Arrays f)
-  vlengths :: Proxy f -> Proxy a -> ArrayLengths
+  vlengths :: Proxy f -> Proxy a -> ArrayLengths Word64
 
   default vectorize :: (Generic a, All2 (PolyVec f) (Code a)) => a -> Arrays f
   vectorize = gvectorize
@@ -132,8 +137,16 @@ class PolyVec f a where
                       , Code a ~ '[xs]
                       , All (PolyVec f) xs
                       )
-                   => Proxy f -> Proxy a -> ArrayLengths
+                   => Proxy f -> Proxy a -> ArrayLengths Word64
   vlengths = const . const $ gvlengths (Proxy :: Proxy f) (Proxy :: Proxy a)
+
+
+-- overlapping :(
+--instance (PolyVec f a, Applicative g, Traversable g) => PolyVec f (g a) where
+--  vectorize = vectorizeV
+--  devectorizeIncremental = devectorizeIncrementalV
+--  vlengths = vlengthsV
+
 
 gvectorize :: (Generic a, All2 (PolyVec f) (Code a)) => a -> Arrays f
 gvectorize x = gvectorizeS (from x)
@@ -182,12 +195,12 @@ gvlengths :: forall a xs f .
              , Code a ~ '[xs]
              , All (PolyVec f) xs
              )
-          => Proxy f -> Proxy a -> ArrayLengths
+          => Proxy f -> Proxy a -> ArrayLengths Word64
 gvlengths =
   const . const $
   gvlengthsP (Proxy :: Proxy f) (Proxy :: Proxy (NP I xs))
 
-gvlengthsP :: forall f xs . (All (PolyVec f) xs) => Proxy f -> Proxy (NP I xs) -> ArrayLengths
+gvlengthsP :: forall f xs . (All (PolyVec f) xs) => Proxy f -> Proxy (NP I xs) -> ArrayLengths Word64
 gvlengthsP = const . const $ case (sList :: SList xs) of
   SNil -> mempty
   r@SCons -> f r
@@ -196,7 +209,7 @@ gvlengthsP = const . const $ case (sList :: SList xs) of
            ( PolyVec f x
            , All (PolyVec f) xs1
            )
-        => SList (x : xs1) -> ArrayLengths
+        => SList (x : xs1) -> ArrayLengths Word64
       f = const $
         vlengths (Proxy :: Proxy f) (Proxy :: Proxy x)
         `mappend`
@@ -227,6 +240,39 @@ devectorize' vs = case devectorizeIncremental vs of
       , V.length $ arrayDouble leftovers
       ] -> Left "deserialise got leftovers"
     | otherwise -> Right r
+
+
+vectorizeV :: (PolyVec f a, Foldable g)
+           => g a -> Arrays f
+vectorizeV = foldMap vectorize
+
+
+vlengthsV :: forall f g a .
+             ( PolyVec f a
+             , Applicative g, Foldable g
+             )
+          => Proxy f -> Proxy (g a) -> ArrayLengths Word64
+vlengthsV _ _ = foldMap vlengths' (pure Proxy :: g (Proxy a))
+  where
+    vlengths' :: Proxy a -> ArrayLengths Word64
+    vlengths' _ = vlengths (Proxy :: Proxy f) (Proxy :: Proxy a)
+
+
+devectorizeIncrementalV :: forall f g a .
+                           ( PolyVec f a
+                           , Traversable g, Applicative g
+                           )
+                        => Arrays f -> Either String (g a, Arrays f)
+devectorizeIncrementalV = runExcept . runStateT (sequenceA (pure f))
+  where
+    f :: StateT (Arrays f) (Except String) a
+    f = do
+      vs0 <- get
+      case devectorizeIncremental vs0 of
+        Right (x, vs1) -> do
+          put vs1
+          return x
+        Left err -> fail err
 
 
 -- the rest of this is the actual values

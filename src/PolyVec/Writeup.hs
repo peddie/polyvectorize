@@ -172,7 +172,7 @@ toGraph fun = fun inputs
     inputArrays :: Arrays Expr
     inputArrays = toSymbolicInputArrays $ vlengths (Proxy :: Proxy Expr) (Proxy :: Proxy (x Expr))
       where
-        toSymbolicInputArrays :: ArrayLengths -> Arrays Expr
+        toSymbolicInputArrays :: ArrayLengths Word64 -> Arrays Expr
         toSymbolicInputArrays ns =
           Arrays
           { arrayBool   = toSyms "b"   (nBool   ns)

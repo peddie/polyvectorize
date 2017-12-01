@@ -23,6 +23,7 @@ library
                        linear,
                        sbv,
                        spatial-math,
+                       transformers,
                        TypeCompose,
                        vector
 
