@@ -12,6 +12,8 @@
 module PolyVec.Class
        ( Arrays(..), ArrayLengths(..)
        , PolyVec(..)
+
+         -- * non-incremental wrappers
        , devectorize, devectorize'
 
          -- * Vectorize-friendly versions
@@ -117,7 +119,6 @@ instance Num a => Monoid (ArrayLengths a) where
     , nDouble = nDouble x + nDouble y
     }
 
---class PolyVec (f :: * -> *) (a :: *) where
 class PolyVec f a where
   vectorize :: a -> Arrays f
   devectorizeIncremental :: Arrays f -> Either String (a, Arrays f)
@@ -141,11 +142,18 @@ class PolyVec f a where
   vlengths = const . const $ gvlengths (Proxy :: Proxy f) (Proxy :: Proxy a)
 
 
--- overlapping :(
---instance (PolyVec f a, Applicative g, Traversable g) => PolyVec f (g a) where
---  vectorize = vectorizeV
---  devectorizeIncremental = devectorizeIncrementalV
---  vlengths = vlengthsV
+instance (PolyVec f (f a), Applicative g, Traversable g) => PolyVec f (g (f a)) where
+  vectorize = vectorizeV
+  devectorizeIncremental = devectorizeIncrementalV
+  vlengths = vlengthsV
+
+instance (PolyVec f (a f), Applicative g, Traversable g) => PolyVec f (g (a f)) where
+  vectorize = vectorizeV
+  devectorizeIncremental = devectorizeIncrementalV
+  vlengths = const . const $ foldMap vlengths' (pure Proxy :: g (Proxy (a f)))
+    where
+      vlengths' :: Proxy (a f) -> ArrayLengths Word64
+      vlengths' = const $ vlengths (Proxy :: Proxy f) (Proxy :: Proxy (a f))
 
 
 gvectorize :: (Generic a, All2 (PolyVec f) (Code a)) => a -> Arrays f
@@ -216,12 +224,13 @@ gvlengthsP = const . const $ case (sList :: SList xs) of
         gvlengthsP (Proxy :: Proxy f) (Proxy :: Proxy (NP I xs1))
 
 
--- | partial version of 'devectorize\''
+-- | partial version of 'devectorize''
 devectorize :: PolyVec f a => Arrays f -> a
 devectorize vs = case devectorize' vs of
   Right r -> r
   Left err -> error err
 
+-- | non-incremental version of 'devectorizeIncremental'
 devectorize' :: PolyVec f a => Arrays f -> Either String a
 devectorize' vs = case devectorizeIncremental vs of
   Left err -> Left err

@@ -6,12 +6,14 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveFoldable #-}
+{-# LANGUAGE DeriveTraversable #-}
 
 -- | Writeup of thoughts on design decisions.
 module PolyVec.Writeup where
 
 import qualified GHC.Generics
-import Generics.SOP
 
 import PolyVec.Class ( PolyVec(..), Arrays(..), ArrayLengths(..), devectorize' )
 
@@ -20,6 +22,7 @@ import Data.List ( intercalate )
 import Data.Word ( Word8, Word16, Word32, Word64 )
 import qualified Data.Vector as V
 --import Data.SBV ( SBV )
+import Generics.SOP
 
 
 -- | The goal is to write polymorphic haskell code that can be evaluted
@@ -134,7 +137,14 @@ data Foo f = Foo (f Double) (f Bool) deriving (GHC.Generics.Generic)
 instance Generic (Foo f)
 instance PolyVec f (Foo f)
 
-data RealWorldInputs f = RealWorldInputs (f Double) (Foo f) (f Double) deriving (GHC.Generics.Generic)
+data V2 a = V2 a a deriving (Functor, Foldable, Traversable)
+instance Applicative V2 where
+  pure x = V2 x x
+  V2 fx fy <*> V2 x y = V2 (fx x) (fy y)
+
+data RealWorldInputs f =
+  RealWorldInputs (V2 (f Double)) (f Double) (Foo f) (f Double)
+  deriving (GHC.Generics.Generic)
 instance Generic (RealWorldInputs f)
 instance PolyVec f (RealWorldInputs f)
 
@@ -143,7 +153,7 @@ instance Generic (RealWorldOutputs f)
 instance PolyVec f (RealWorldOutputs f)
 
 realWorldFunction :: (Num (f Double), SymEq f) => RealWorldInputs f -> RealWorldOutputs f
-realWorldFunction (RealWorldInputs x (Foo w _) y) = RealWorldOutputs (x * y + w) (x .== (y + w))
+realWorldFunction (RealWorldInputs _ x (Foo w _) y) = RealWorldOutputs (x * y + w) (x .== (y + w))
 
 -- | We can run this function natively.
 realWorldFunctionNative :: RealWorldInputs Native -> RealWorldOutputs Native

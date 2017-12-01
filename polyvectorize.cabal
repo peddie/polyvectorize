@@ -15,9 +15,9 @@ cabal-version:       >=1.10
 library
   hs-source-dirs:      src
   exposed-modules:     PolyVec.Class
-                       PolyVec.Orphans
+--                       PolyVec.Orphans
                        PolyVec.Writeup
-                       PolyVec.Stuff
+--                       PolyVec.Stuff
   build-depends:       base >= 4.7 && < 5,
                        generics-sop,
                        linear,
