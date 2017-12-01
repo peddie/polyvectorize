@@ -4,6 +4,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -119,7 +120,7 @@ instance Num a => Monoid (ArrayLengths a) where
     , nDouble = nDouble x + nDouble y
     }
 
-class PolyVec f a where
+class PolyVec f a | a -> f where
   vectorize :: a -> Arrays f
   devectorizeIncremental :: Arrays f -> Either String (a, Arrays f)
   vlengths :: Proxy f -> Proxy a -> ArrayLengths Word64
