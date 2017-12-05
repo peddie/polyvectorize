@@ -215,8 +215,9 @@ realWorldGraph = toGraph realWorldFunction
 realWorldGraphAsArrays :: Arrays Expr
 realWorldGraphAsArrays = vectorize realWorldGraph
 
+
 -- | yeah i don't have a pretty show instance
-uglyShow :: ( Show (f Bool)
+showArrays :: ( Show (f Bool)
             , Show (f Int8)
             , Show (f Int16)
             , Show (f Int32)
@@ -229,7 +230,7 @@ uglyShow :: ( Show (f Bool)
             , Show (f Double)
             )
          => Arrays f -> String
-uglyShow x =
+showArrays x =
   intercalate "\n"
   [ "Arrays"
   , "{ arrayBool    = " ++ show (V.toList (arrayBool   x))
@@ -245,10 +246,10 @@ uglyShow x =
   , ", arrayDoubles = " ++ show (V.toList (arrayDouble x))
   , "}"
   ]
-
--- | so here's the result
-uglyRealWorldGrahAsArrays :: String
-uglyRealWorldGrahAsArrays = uglyShow realWorldGraphAsArrays
+instance Show (Arrays Native) where
+  show = showArrays
+instance Show (Arrays Expr) where
+  show = showArrays
 
 
 -- down here, just an idea for discarding Native types to make things easier to work with?
